@@ -1,10 +1,5 @@
 package io.johnsonlee.exec.cmd
 
-import com.fasterxml.jackson.databind.SerializationFeature
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.google.auto.service.AutoService
 import io.johnsonlee.exec.internal.network.toCookieStore
 import java.io.File
@@ -21,6 +16,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import okhttp3.Authenticator
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -32,14 +33,6 @@ import picocli.CommandLine
 
 @AutoService(Command::class)
 open class FetchCommand : IOCommand() {
-
-    companion object {
-        private val objectMapper = jacksonObjectMapper().apply {
-            registerKotlinModule()
-            registerModules(JavaTimeModule())
-            disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-        }
-    }
 
     @CommandLine.Option(names = ["-u", "--username"], description = ["Username"])
     lateinit var username: String
@@ -65,9 +58,32 @@ open class FetchCommand : IOCommand() {
 
     private val client by lazy {
         val cookieStore = if (::cookieJar.isInitialized && cookieJar.exists()) {
-            cookieJar.inputStream().use { input ->
-                objectMapper.readValue<List<HttpCookie>>(input).toCookieStore()
-            }
+            Json.parseToJsonElement(cookieJar.readText()).jsonArray.mapNotNull { json ->
+                val cookie = json.jsonObject
+                val name = cookie["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val value = cookie["value"]?.jsonPrimitive?.content ?: return@mapNotNull null
+
+                HttpCookie(name, value).apply {
+                    cookie["domain"]?.jsonPrimitive?.content?.let {
+                        this.domain = it
+                    }
+                    cookie["path"]?.jsonPrimitive?.content?.let {
+                        this.path = it
+                    }
+                    cookie["maxAge"]?.jsonPrimitive?.longOrNull?.let {
+                        this.maxAge = it
+                    }
+                    cookie["secure"]?.jsonPrimitive?.booleanOrNull?.let {
+                        this.secure = it
+                    }
+                    cookie["httpOnly"]?.jsonPrimitive?.booleanOrNull?.let {
+                        this.isHttpOnly = it
+                    }
+                    cookie["version"]?.jsonPrimitive?.longOrNull?.toInt()?.let {
+                        this.version = it
+                    }
+                }
+            }.toCookieStore()
         } else {
             null
         }

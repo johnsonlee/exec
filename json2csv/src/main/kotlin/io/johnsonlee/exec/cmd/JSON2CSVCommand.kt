@@ -1,11 +1,9 @@
 package io.johnsonlee.exec.cmd
 
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.databind.node.TextNode
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.google.auto.service.AutoService
 import com.jayway.jsonpath.Configuration
 import com.jayway.jsonpath.DocumentContext
@@ -124,9 +122,7 @@ import picocli.CommandLine
 open class JSON2CSVCommand : DOM2CSVCommand() {
 
     companion object {
-        val objectMapper = jacksonObjectMapper().apply {
-            registerKotlinModule()
-            registerModules(JavaTimeModule())
+        val objectMapper = ObjectMapper().apply {
             disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
         }
     }

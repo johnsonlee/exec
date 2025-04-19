@@ -1,5 +1,3 @@
-import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
-
 plugins {
     kotlin("jvm")
     kotlin("kapt")
@@ -11,16 +9,7 @@ dependencies {
     kapt(libs.auto.service)
     kapt(libs.pico.codegen)
 
+    api(libs.jackson.databind)
     api(libs.jsonpath)
     api(project(":dom2csv"))
-}
-
-val shadowJar by tasks.getting(ShadowJar::class) {
-    archiveBaseName.set(project.name)
-    archiveClassifier.set("all")
-    archiveVersion.set("${project.version}")
-    manifest {
-        attributes["Main-Class"] = "io.johnsonlee.exec.cmd.JSON2CSVCommandKt"
-    }
-    mergeServiceFiles()
 }

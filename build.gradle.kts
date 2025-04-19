@@ -1,8 +1,4 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
-import com.github.jengelman.gradle.plugins.shadow.transformers.Transformer
-import com.github.jengelman.gradle.plugins.shadow.transformers.TransformerContext
-import io.johnsonlee.gradle.publish.publishing
-import org.apache.tools.zip.ZipOutputStream
 import org.gradle.api.Project.DEFAULT_VERSION
 
 plugins {
@@ -10,6 +6,12 @@ plugins {
     kotlin("kapt") version embeddedKotlinVersion
     id("io.johnsonlee.sonatype-publish-plugin") version "1.10.0"
     id("com.github.johnrengelman.shadow") version "8.1.1"
+}
+
+dependencies {
+    implementation(project(":fetch"))
+    implementation(project(":json2csv"))
+    implementation(project(":save-cookies"))
 }
 
 allprojects {
@@ -20,67 +22,36 @@ allprojects {
         mavenCentral()
         google()
     }
-}
 
-dependencies {
-    implementation(project(":fetch"))
-    implementation(project(":json2csv"))
-    implementation(project(":save-cookies"))
-}
+    val mainClassName = extra["main.class"] as String
 
-val shadowJar by tasks.getting(ShadowJar::class) {
-    archiveBaseName.set(project.name)
-    archiveClassifier.set("all")
-    archiveVersion.set("${project.version}")
-    manifest {
-        attributes["Main-Class"] = "io.johnsonlee.exec.MainKt"
-    }
-    mergeServiceFiles()
-}
-
-setOf("linux", "linux-arm64", "mac", "mac-arm64", "win32_x64").let { platforms ->
-    platforms.forEach { platform ->
-        val taskName = "shadowJarFor${platform.replace("[^a-zA-Z0-9]".toRegex(), "")}"
-        val shadowJarForPlatform = tasks.register<ShadowJar>(taskName) {
-            // copy from shadowJar
-            archiveBaseName.set(shadowJar.archiveBaseName)
-            archiveVersion.set(shadowJar.archiveVersion)
-            manifest = shadowJar.manifest
-            configurations = shadowJar.configurations
-            from(shadowJar.source)
-
-            // set platform classifier
-            archiveClassifier.set(platform)
-
-            // remove unnecessary files
-            transform(object : Transformer {
-                override fun getName() = "exclude-unused-playwright-driver"
-                override fun canTransformResource(element: FileTreeElement): Boolean {
-                    val path = element.relativePath.pathString
-                    if (path.startsWith("driver/")) {
-                        return !path.startsWith("driver/$platform/")
-                    }
-                    return false
-                }
-
-                override fun transform(context: TransformerContext) = Unit
-                override fun hasTransformedResource() = false
-                override fun modifyOutputStream(os: ZipOutputStream, preserveFileTimestamps: Boolean) = Unit
-            })
+    plugins.withId("com.github.johnrengelman.shadow") {
+        val shadowJar by tasks.getting(ShadowJar::class) {
+            archiveBaseName.set(project.name)
+            archiveClassifier.set("all")
+            archiveVersion.set("${project.version}")
+            manifest {
+                attributes["Main-Class"] = mainClassName
+            }
             mergeServiceFiles()
         }
 
-        publishing {
-            publications {
-                withType<MavenPublication> {
-                    if (name != "shadow") return@withType
-                    artifact(shadowJarForPlatform) {
-                        classifier = platform
+        val buildExecutable by tasks.registering {
+            group = "distribution"
+            description = "Build self-contained executable CLI"
+
+            doLast {
+                layout.buildDirectory.get().dir("executable").dir(project.name).asFile.apply {
+                    parentFile.mkdirs()
+                    outputStream().use { out ->
+                        rootProject.file("launcher.sh").inputStream().copyTo(out)
+                        shadowJar.archiveFile.get().asFile.inputStream().copyTo(out)
                     }
+                    setExecutable(true, false)
                 }
             }
         }
 
-        shadowJar.dependsOn(shadowJarForPlatform)
+        shadowJar.finalizedBy(buildExecutable)
     }
 }

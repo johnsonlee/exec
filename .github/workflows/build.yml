@@ -1,4 +1,4 @@
-name: Run unit tests
+name: Build and Test
 
 on:
   push:
@@ -11,6 +11,7 @@ on:
 
 jobs:
   run-unit-test:
+    name: Build and test
     runs-on: ubuntu-latest
 
     steps:
@@ -21,10 +22,45 @@ jobs:
       uses: actions/setup-java@v2
       with:
         distribution: 'adopt'
-        java-version: '11'
+        java-version: '17'
 
-    - name: build
-      run: ./gradlew check -S --no-daemon
+    - name: Compile and test
+      run: ./gradlew shadowJar check -S --no-daemon
       env:
-        JAVA_OPTS: -Xmx8g -XX:MaxPermSize=1g -XX:MetaspaceSize=1g -Dfile.encoding=UTF-8
-        JVM_OPTS:  -Xmx8g -XX:MaxPermSize=1g -XX:MetaspaceSize=1g -Dfile.encoding=UTF-8
+        JAVA_OPTS: -Xmx8g -XX:MetaspaceSize=1g -Dfile.encoding=UTF-8
+        JVM_OPTS:  -Xmx8g -XX:MetaspaceSize=1g -Dfile.encoding=UTF-8
+
+    - name: Upload `exec-fetch`
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: exec-fetch
+        path: fetch/build/executable/fetch
+
+    - name: Upload `exec-html2csv`
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: exec-html2csv
+        path: html2csv/build/executable/html2csv
+
+    - name: Upload `exec-json2csv`
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: exec-json2csv
+        path: json2csv/build/executable/json2csv
+
+    - name: Upload `exec-save-cookies`
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: exec-save-cookies
+        path: save-cookies/build/executable/save-cookies
+
+    - name: Upload `exec-cli`
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: exec-cli
+        path: build/executable/exec
