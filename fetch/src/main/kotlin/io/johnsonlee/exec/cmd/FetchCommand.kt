@@ -18,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import okhttp3.Authenticator
@@ -98,12 +99,12 @@ open class FetchCommand : IOCommand() {
     }
 
     override fun run(): Unit = runBlocking {
-        fetch { input ->
-            get(input) { src ->
-                File(output).outputStream().use { dest ->
+        File(output).outputStream().use { dest ->
+            fetch { input ->
+                get(input) { src ->
                     src.copyTo(dest)
                 }
-            }
+            }.collect()
         }
     }
 
