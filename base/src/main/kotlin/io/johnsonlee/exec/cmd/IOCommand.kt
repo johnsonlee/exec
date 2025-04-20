@@ -8,7 +8,7 @@ abstract class IOCommand : Command {
     @ParentCommand
     lateinit var parent: Exec
 
-    @CommandLine.Parameters(index = "0", description = ["Input URIs"], arity = "1..*")
+    @CommandLine.Parameters(index = "0", description = ["URIs to read or `-` for stdin"], arity = "1..*")
     lateinit var input: List<String>
 
     @CommandLine.Option(names = ["-o", "--output"], description = ["Output URI"], defaultValue = "/dev/stdout")

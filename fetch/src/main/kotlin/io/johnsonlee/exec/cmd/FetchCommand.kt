@@ -148,14 +148,18 @@ open class FetchCommand : IOCommand() {
             } ?: error("Loading document from $uri failed: ${response.code}")
         }
     } catch (e: IllegalArgumentException) {
-        try {
-            URL(uri).openStream().use {
-                transform(it)
+        if (uri == "--" || uri == "-") {
+            transform(System.`in`)
+        } else {
+            try {
+                URL(uri).openStream().use {
+                    transform(it)
+                }
+            } catch (e: IOException) {
+                File(uri).takeIf(File::exists)?.inputStream()?.use {
+                    transform(it)
+                } ?: error("Loading document from $uri failed: ${e.message}")
             }
-        } catch (e: IOException) {
-            File(uri).takeIf(File::exists)?.inputStream()?.use {
-                transform(it)
-            } ?: error("Loading document from $uri failed: ${e.message}")
         }
     }
 }
