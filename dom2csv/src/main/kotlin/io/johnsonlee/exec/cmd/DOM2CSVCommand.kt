@@ -1,7 +1,15 @@
 package io.johnsonlee.exec.cmd
 
 import java.io.File
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flatMapMerge
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import picocli.CommandLine.Option
@@ -27,6 +35,7 @@ abstract class DOM2CSVCommand : FetchCommand(), DOMParser {
         parse(it, input)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun run() = runBlocking {
         File(output).printWriter().use { printer ->
             if (noHeader) {
@@ -35,23 +44,24 @@ abstract class DOM2CSVCommand : FetchCommand(), DOMParser {
                 printer.println(header.joinToString(delimiter))
             }
 
-            fetch { input ->
-                input to parse(input)
-            }.map { (input, root) ->
-                val global = Variable(root)
-                val source = Variable(root.newTextNode(input).context)
-                val variables = VariableTable(global, mapOf("\$" to global, "\$__source__" to source))
-                val initialPipeline = listOf(PipemillContext(rowExpression, variables))
-                val pipemills = parsePipemills(rowExpression)
-
-                evaluatePipeline(initialPipeline, pipemills).forEach { row ->
-                    printer.println(row.joinToString(delimiter) {
-                        it.text.takeIf(String::isNotBlank)?.let { text ->
-                            "$textQualifier${text.trim()}$textQualifier"
-                        } ?: ""
-                    })
+            input.asFlow().flatMapMerge { url ->
+                flow {
+                    val root = parse(url)
+                    val global = Variable(root)
+                    val source = Variable(root.newTextNode(url).context)
+                    val variables = VariableTable(global, mapOf("\$" to global, "\$__source__" to source))
+                    val initialPipeline = listOf(PipemillContext(rowExpression, variables))
+                    val pipemills = parsePipemills(rowExpression)
+                    emitAll(evaluatePipeline(initialPipeline, pipemills))
                 }
-            }.collect()
+            }.flowOn(Dispatchers.IO).collect { row ->
+                printer.println(row.joinToString(delimiter) {
+                    it.text.takeIf(String::isNotBlank)?.let { text ->
+                        "$textQualifier${text.trim()}$textQualifier"
+                    } ?: ""
+                })
+                printer.flush()
+            }
         }
     }
 
@@ -75,19 +85,25 @@ abstract class DOM2CSVCommand : FetchCommand(), DOMParser {
         else -> SimplePipemill(pipemill, raw)
     }
 
-    private fun evaluatePipeline(currentNodes: List<PipemillContext>, steps: List<Pipemill>, stepIndex: Int = 0): Sequence<List<DOMNode>> {
-        if (stepIndex >= steps.size || steps.size == 1) {
-            return currentNodes.map { pipeline ->
-                evaluatePipemill(steps.last(), pipeline.variables)
-            }.asSequence().flatten()
-        }
+    private suspend fun evaluatePipeline(currentNodes: List<PipemillContext>, steps: List<Pipemill>) = flow {
+        var current = currentNodes
 
-        val step = steps[stepIndex]
-        val nextNodes = currentNodes.flatMap { pipeline ->
-            parseDownstreamPipemillContext(pipeline, step)
-        }
+        for ((index, step) in steps.withIndex()) {
+            val isLast = index == steps.lastIndex
+            val next = mutableListOf<PipemillContext>()
 
-        return evaluatePipeline(nextNodes, steps, stepIndex + 1)
+            for (pipeline in current) {
+                if (isLast) {
+                    emitAll(evaluatePipemill(step, pipeline.variables))
+                } else {
+                    val results = parseDownstreamPipemillContext(pipeline, step)
+                    next += results
+                }
+            }
+
+            current = next
+            if (current.isEmpty()) break
+        }
     }
 
     private fun parseDownstreamPipemillContext(
@@ -140,43 +156,35 @@ abstract class DOM2CSVCommand : FetchCommand(), DOMParser {
         }
     }
 
-    private fun evaluatePipemill(pipemill: Pipemill, variables: VariableTable): Sequence<List<DOMNode>> = when (pipemill) {
+    private fun evaluatePipemill(pipemill: Pipemill, variables: VariableTable) = when (pipemill) {
         is SimplePipemill -> expandSimplePipemill(pipemill, variables)
         is ObjectPipemill -> expandObjectPipemill(pipemill, variables)
     }
 
-    private fun expandObjectPipemill(pipemill: ObjectPipemill, variables: VariableTable): Sequence<List<DOMNode>> = sequence {
+    private fun expandObjectPipemill(pipemill: ObjectPipemill, variables: VariableTable): Flow<List<DOMNode>> {
         val extractedValues = pipemill.objectDefinition.mapValues { (_, path) ->
             variables.evaluate(path)
         }
 
-        val rows = if (extractedValues.values.all { it.size <= 1 }) {
-            listOf(extractedValues.values.map(List<DOMNode>::first))
-        } else {
-            val staticValues = extractedValues.filterValues {
-                it.size <= 1
-            }.mapValues {
-                it.value.first()
-            }
-            val arrayValues = extractedValues.filterValues { it.size > 1 }
-
-            cartesianProduct(arrayValues).map {
-                staticValues + it
-            }.map {
-                it.values.toList()
-            }
+        if (extractedValues.values.all { it.size <= 1 }) {
+            return flowOf(extractedValues.values.map(List<DOMNode>::first))
         }
 
-        rows.forEach {
-            yield(it)
+        val staticValues = extractedValues.filterValues {
+            it.size <= 1
+        }.mapValues {
+            it.value.first()
+        }
+        val arrayValues = extractedValues.filterValues { it.size > 1 }
+
+        return cartesianProduct(arrayValues).asFlow().map {
+            (staticValues + it).values.toList()
         }
     }
 
-    private fun expandSimplePipemill(pipemill: SimplePipemill, variables: VariableTable) = sequence {
+    private fun expandSimplePipemill(pipemill: SimplePipemill, variables: VariableTable): Flow<List<DOMNode>> {
         val extractedValues = variables.evaluate(pipemill.path)
-        extractedValues.forEach {
-            yield(listOf(it))
-        }
+        return extractedValues.asFlow().map(::listOf)
     }
 
     private fun cartesianProduct(columns: Map<String, List<DOMNode>>): List<Map<String, DOMNode>> {
